@@ -5,6 +5,7 @@ araştırma/
 dataset/**
 !dataset/**/
 !dataset/**/.gitkeep
+!dataset/code/*.ipynb
 
 # Yerel araç ayarları
 .claude/
