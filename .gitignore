@@ -1,0 +1,15 @@
+# Literatür (repoya eklenmiyor)
+araştırma/
+
+# Veri setleri: sadece klasör yapısı tutuluyor, içerik yerelde
+dataset/**
+!dataset/**/
+!dataset/**/.gitkeep
+
+# Yerel araç ayarları
+.claude/
+
+# Python / Office geçici dosyaları
+__pycache__/
+*.pyc
+~$*
