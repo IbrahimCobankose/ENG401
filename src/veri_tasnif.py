@@ -33,7 +33,9 @@ DATA = PROJE / "dataset"
 CIKTI = PROJE / "src" / "output"
 CIKTI.mkdir(parents=True, exist_ok=True)
 
-RT345_H5 = DATA / "Rt345Bridge.h5"
+# Zenodo v2 (doi:10.5281/zenodo.15497673), MD5 5c3e2aff20e1984fce15bd18f57f62eb.
+# v1'de strain verisi tüm senaryolarda aynı senaryodan kopyalanmıştı; v2'de düzeltildi.
+RT345_H5 = DATA / "Rt345Bridge.h5.v2" / "Rt345Bridge.h5"
 SDOF_OUT = DATA / "output" / "output"
 SDOF_IN = DATA / "input" / "input"
 
@@ -140,10 +142,14 @@ def rt345_envanter():
                             test=test, kayit_id=f"{sc}/{test}",
                             zaman=_txt(T.attrs["time"]),                      # [V]
                             sensor=sensor, yon=yon,
+                            sensor_name=_txt(S.attrs["name"]),                # [V]
+                            sensor_type=_txt(S.attrs["type"]),                # [V]
                             location=_txt(S.attrs["location"]),               # [V]
                             x_m=pos[0], y_m=pos[1], z_m=pos[2],               # [V]
                             sample_rate_hz=fs,                                # [V]
+                            internal_sample_rate_hz=float(_txt(S.attrs["internal_sample_rate"])),  # [V]
                             unit=_txt(S.attrs["unit"]),                       # [V]
+                            h5_number_of_samples=int(_txt(T.attrs["number of samples"])),  # [V]
                             n_ornek=x.size, sure_s=x.size / fs,
                             nan_sayisi=int(np.isnan(x).sum()),
                             tum_degerler_sifir=bool(np.all(x == 0)),
@@ -163,12 +169,77 @@ def rt345_kayit_tablosu(env):
                                     + env.loc[maske.index[maske], "yon"])))
     return (env.groupby(["case_no", "senaryo", "makale_senaryo_adi", "test", "kayit_id",
                          "damage_type", "damage_location", "damage_severity", "zaman",
-                         "sample_rate_hz", "n_ornek", "sure_s"])
+                         "sample_rate_hz", "h5_number_of_samples", "n_ornek", "sure_s"])
             .agg(sensor_sayisi=("sensor", "nunique"),
                  tum_degerler_sifir_kanallar=("tum_degerler_sifir", kanal_listesi),
                  olcum_araligi_asan_kanallar=("olcum_araligi_asildi", kanal_listesi),
                  makale_notu=("makale_notu", lambda s: "; ".join(sorted(set(s) - {""}))))
             .reset_index())
+
+
+# [M] ST350 strain ölçerlerin tam ölçek aralığı: "a full-scale range of ±4,000 με".
+# h5'te sensör tipi var ama aralık yok; bu yüzden değer makaleden alındı.
+STRAIN_OLCUM_ARALIGI = 4000.0  # microstrain
+
+
+def rt345_strain_envanteri():
+    """Her (senaryo, şerit, strain sensörü) için bir satır: h5 metadata'sı + sinyal istatistikleri.
+    Strain, kamyon üç şerit konumunda dururken alınmış statik yükleme ölçümüdür [M]."""
+    satirlar = []
+    with h5py.File(RT345_H5, "r") as f:
+        for sc, (case_no, makale_adi) in RT345_MAKALE_TABLO2.items():
+            g = f[sc]
+            for serit, L in g["strain"].items():
+                for sensor, S in L.items():
+                    x = S[()].ravel()
+                    fs = float(_txt(S.attrs["sample_rate"]))
+                    pos = S.attrs["position"]
+                    satirlar.append(dict(
+                        senaryo=sc, case_no=case_no, makale_senaryo_adi=makale_adi,  # [M Table 2]
+                        damage_type=_txt(g.attrs["damage_type"]),                  # [V]
+                        damage_location=_txt(g.attrs["damage_location"]),          # [V]
+                        damage_severity=_txt(g.attrs["damage_severity"]),          # [V]
+                        serit=serit, sensor=sensor,
+                        sensor_name=_txt(S.attrs["name"]),                         # [V]
+                        sensor_type=_txt(S.attrs["type"]),                         # [V]
+                        location=_txt(S.attrs["location"]),                        # [V]
+                        x_m=pos[0], y_m=pos[1], z_m=pos[2],                        # [V]
+                        sample_rate_hz=fs,                                         # [V]
+                        internal_sample_rate_hz=float(_txt(S.attrs["internal_sample_rate"])),  # [V]
+                        unit=_txt(S.attrs["unit"]),                                # [V]
+                        n_ornek=x.size, sure_s=x.size / fs,
+                        nan_sayisi=int(np.isnan(x).sum()),
+                        tum_degerler_sifir=bool(np.all(x == 0)),
+                        min=float(np.nanmin(x)), max=float(np.nanmax(x)),
+                        ortalama=float(np.nanmean(x)), std=float(np.nanstd(x)),
+                        olcum_araligi_asildi=float(np.nanmax(np.abs(x))) > STRAIN_OLCUM_ARALIGI,  # [M]
+                    ))
+    return pd.DataFrame(satirlar).sort_values(["case_no", "serit", "sensor"])
+
+
+def rt345_fotograf_listesi():
+    """photographs grubundaki görüntülerin listesi [V]. Görüntülerde attribute yok."""
+    satirlar = []
+    with h5py.File(RT345_H5, "r") as f:
+        for sc, (case_no, makale_adi) in RT345_MAKALE_TABLO2.items():
+            if "photographs" not in f[sc]:
+                satirlar.append(dict(senaryo=sc, case_no=case_no, fotograf="",
+                                     not_="Bu senaryoda photographs grubu yok"))
+                continue
+            for ad, ds in f[sc]["photographs"].items():
+                satirlar.append(dict(senaryo=sc, case_no=case_no, fotograf=ad,
+                                     h5_yolu=f"{sc}/photographs/{ad}",
+                                     shape=str(ds.shape), dtype=str(ds.dtype), not_=""))
+    df = pd.DataFrame(satirlar)
+    df["fotograf_sira"] = pd.to_numeric(df["fotograf"], errors="coerce")
+    return (df.sort_values(["case_no", "fotograf_sira"]).drop(columns="fotograf_sira")
+            .rename(columns={"not_": "not"}))
+
+
+def rt345_genel_bilgi():
+    """Dosyanın kök (root) attribute'ları [V]."""
+    with h5py.File(RT345_H5, "r") as f:
+        return pd.DataFrame([dict(attribute=k, deger=_txt(v)) for k, v in f.attrs.items()])
 
 
 def rt345_ornek_grafik():
@@ -230,11 +301,54 @@ def sdof_ivme_oku(senaryo, saat_index):
     return np.arange(x.size) / SDOF_FS, x, SDOF_FS
 
 
-def sdof_envanter():
-    """Her saatlik ivme dosyası için bir satır: etiket [V] + tarih [N] + sıcaklık/yük [V]."""
+# Senaryo klasörü -> km_pairs dosyası. Eşleşme dosya adlarından [V] (D21 -> D2_1 ...).
+# Sütun 0 = rijitlik k, sütun 1 = kütle m [N 2_SDOF, korozyon hücreleri].
+# D4 için km dosyası yok. Varyant dosyalar (1_km_D1.1, 3_km_D22_1 ...) hiçbir yerde
+# açıklanmadığı için satırlara bağlanmıyor; sadece sdof_dosya_envanteri.csv'de listeleniyor.
+SDOF_KM_DOSYASI = {
+    "D1": "1_km_D1.txt", "D2_1": "2_km_D21.txt", "D2_2": "3_km_D22.txt", "D2_3": "4_km_D23.txt",
+    "D3_1": "5_km_D31.txt", "D3_2": "6_km_D32.txt", "D3_3": "7_km_D33.txt", "D5": "8_km_D5.txt",
+}
+# 1_deflection_D1-5.txt sütun sırası [N 2_SDOF hücre 58-59]: D1, D21, D22, D23, D31, D32, D33, D5.
+# Satır i = saat indeksi i; birim mm ("delta = P / k * 1000 # [mm]") [N].
+SDOF_DEFLECTION_SUTUN = ["D1", "D2_1", "D2_2", "D2_3", "D3_1", "D3_2", "D3_3", "D5"]
+
+
+def _sdof_km(sc):
+    """km dosyasını saat indeksine bağlar. 1_km_D1 saat 0'dan, diğerleri 13104'ten
+    (indexDataset2Start) başlar ve 26279'da biter [N 2_SDOF]."""
+    if sc not in SDOF_KM_DOSYASI:
+        return pd.DataFrame(columns=["Index", "k", "m"])
+    km = np.loadtxt(SDOF_IN / "km_pairs" / SDOF_KM_DOSYASI[sc])
+    bas = 26280 - len(km)
+    return pd.DataFrame({"Index": np.arange(bas, bas + len(km)), "k": km[:, 0], "m": km[:, 1]})
+
+
+def _sinyal_istatistik(path):
+    with h5py.File(path, "r") as f:
+        x = f["acc"][()].ravel().astype(np.float64)
+    return dict(n_ornek=x.size, nan_sayisi=int(np.isnan(x).sum()),
+                tum_degerler_sifir=bool(np.all(x == 0)),
+                ortalama=float(np.nanmean(x)), std=float(np.nanstd(x)),
+                rms=float(np.sqrt(np.nanmean(x**2))), max_abs=float(np.nanmax(np.abs(x))))
+
+
+def sdof_girdi_tablosu():
+    """Sıcaklık (2019-2023) ve yük (2020-2023) dosyalarının tamamı, tarih üzerinden [V].
+    Saat ızgarasına düşen satırlara Index yazılır [N]; 2019 satırlarının Index'i boştur."""
     yuk = pd.read_csv(SDOF_IN / "load" / "1_totLoad.txt", sep="\t", parse_dates=["Date"])
     sic = pd.read_csv(SDOF_IN / "temperature" / "1_temperature.txt", sep="\t", parse_dates=["Date"])
-    zaman = sdof_zaman_izgarasi().merge(sic, on="Date", how="left").merge(yuk, on="Date", how="left")
+    t = sic.merge(yuk, on="Date", how="outer").merge(sdof_zaman_izgarasi(), on="Date", how="left")
+    t["Index"] = t["Index"].astype("Int64")
+    return t[["Date", "Index", "Temperature", "TotLoad", "LiveLoadLT", "LiveLoadST"]].sort_values("Date")
+
+
+def sdof_envanter(havuz):
+    """Her saatlik ivme dosyası için bir satır: etiket [V] + tarih [N] + sıcaklık/yük [V]
+    + sinyal istatistikleri [V] + k, m [V][N] + sehim [V][N]."""
+    zaman = sdof_zaman_izgarasi().merge(sdof_girdi_tablosu().drop(columns="Date").dropna(subset=["Index"])
+                                        .astype({"Index": int}), on="Index", how="left")
+    sehim = np.loadtxt(SDOF_OUT / "deflection" / "1_deflection_D1-5.txt")
 
     parcalar = []
     for sc, lab_dosya in SDOF_ETIKET_DOSYASI.items():
@@ -244,8 +358,66 @@ def sdof_envanter():
                           "dosya": [p.name for p in dosyalar]})
         # keep_default_na=False: dosyadaki "N/A" metni boş hücreye çevrilmesin
         lab = pd.read_csv(SDOF_OUT / "labels" / lab_dosya, sep="\t", keep_default_na=False)
-        parcalar.append(d.merge(lab, on="Index", how="left").merge(zaman, on="Index", how="left"))
+        d = d.merge(lab, on="Index", how="left").merge(zaman, on="Index", how="left")
+        d = d.merge(_sdof_km(sc), on="Index", how="left")
+        if sc in SDOF_DEFLECTION_SUTUN:
+            sutun = sehim[:, SDOF_DEFLECTION_SUTUN.index(sc)]
+            d["deflection_mm"] = [sutun[i] if i < len(sutun) else np.nan for i in d["Index"]]
+        else:
+            d["deflection_mm"] = np.nan
+        ist = pd.DataFrame(havuz.map(_sinyal_istatistik, dosyalar, chunksize=200))
+        parcalar.append(pd.concat([d, ist], axis=1))
+        print(f"  {sc}: {len(dosyalar)} dosya okundu")
     return pd.concat(parcalar, ignore_index=True)
+
+
+def sdof_etiket_tablosu():
+    """Etiket dosyalarının bütün satırları (ivme dosyası olsun olmasın) + tarih [N]
+    + o saatin ivme dosyası var mı [V]."""
+    zaman = sdof_zaman_izgarasi()
+    parcalar = []
+    for sc, lab_dosya in SDOF_ETIKET_DOSYASI.items():
+        lab = pd.read_csv(SDOF_OUT / "labels" / lab_dosya, sep="\t", keep_default_na=False)
+        var = {int(p.stem[3:8]) for p in (SDOF_OUT / "acceleration" / sc).glob("acc*.h5")}
+        lab.insert(0, "senaryo", sc)
+        lab = lab.merge(zaman, on="Index", how="left")
+        lab["ivme_dosyasi_var"] = lab["Index"].isin(var)
+        parcalar.append(lab)
+    return pd.concat(parcalar, ignore_index=True)
+
+
+def sdof_dosya_envanteri():
+    """input/ ve output/ altındaki ivme dışı her dosya için bir satır [V]."""
+    satirlar = []
+    dosyalar = sorted(p for p in list(SDOF_IN.rglob("*")) + list(SDOF_OUT.rglob("*"))
+                      if p.is_file() and "acceleration" not in p.parts)
+    km_ana = {v: np.loadtxt(SDOF_IN / "km_pairs" / v) for v in SDOF_KM_DOSYASI.values()}
+    for p in dosyalar:
+        sat = dict(klasor=str(p.parent.relative_to(DATA)).replace("\\", "/"), dosya=p.name,
+                   boyut_bayt=p.stat().st_size)
+        if p.suffix == ".csv":  # termo_20xx.csv: ';' ayraçlı, ',' ondalıklı [N 1_EOVs]
+            t = pd.read_csv(p, sep=";", decimal=",")
+            tarih = pd.to_datetime(t["Date"], format="%d/%m/%Y %H:%M")
+            sat.update(satir=len(t), sutun=t.shape[1], sutun_adlari=", ".join(t.columns),
+                       ilk=tarih.min(), son=tarih.max(), bos_hucre=int(t.isna().sum().sum()))
+        elif "km_pairs" in p.parts or "deflection" in p.parts:
+            a = np.loadtxt(p)
+            sat.update(satir=a.shape[0], sutun=a.shape[1] if a.ndim > 1 else 1,
+                       bos_hucre=int(np.isnan(a).sum()))
+            if "km_pairs" in p.parts:
+                ana = next((k for k in km_ana if p.name != k and p.name.startswith(k[:-4])), None)
+                sat["kullanildigi_senaryo"] = next((s for s, k in SDOF_KM_DOSYASI.items() if k == p.name), "")
+                if ana is not None:
+                    sat["ana_dosya"] = ana
+                    sat["ana_dosyayla_ayni"] = bool(np.array_equal(a, km_ana[ana]))
+        else:  # labels, 1_temperature, 1_totLoad: başlıklı, tab ayraçlı
+            t = pd.read_csv(p, sep="\t", keep_default_na=False)
+            sat.update(satir=len(t), sutun=t.shape[1], sutun_adlari=", ".join(t.columns),
+                       bos_hucre=int((t == "").sum().sum()))
+            if "Date" in t:
+                sat.update(ilk=t["Date"].min(), son=t["Date"].max())
+        satirlar.append(sat)
+    return pd.DataFrame(satirlar)
 
 
 def sdof_ornek_grafik():
@@ -281,16 +453,27 @@ if __name__ == "__main__":
     env.to_csv(CIKTI / "rt345_kanal_envanteri.csv", index=False, encoding="utf-8-sig")
     kayit = rt345_kayit_tablosu(env)
     kayit.to_csv(CIKTI / "rt345_kayit_tablosu.csv", index=False, encoding="utf-8-sig")
+    rt345_strain_envanteri().to_csv(CIKTI / "rt345_strain_envanteri.csv", index=False, encoding="utf-8-sig")
+    rt345_fotograf_listesi().to_csv(CIKTI / "rt345_fotograf_listesi.csv", index=False, encoding="utf-8-sig")
+    rt345_genel_bilgi().to_csv(CIKTI / "rt345_genel_bilgi.csv", index=False, encoding="utf-8-sig")
     print("\nRoute 345 - kayıt tablosu:")
     print(kayit[["kayit_id", "sure_s", "sensor_sayisi", "tum_degerler_sifir_kanallar",
                  "olcum_araligi_asan_kanallar", "makale_notu"]].to_string(index=False))
     rt345_ornek_grafik()
 
     # --- SDOF ---
-    senv = sdof_envanter()
+    from multiprocessing import Pool
+    print("\nSDOF ivme dosyaları okunuyor...")
+    with Pool() as havuz:
+        senv = sdof_envanter(havuz)
     senv.to_csv(CIKTI / "sdof_kayit_envanteri.csv", index=False, encoding="utf-8-sig")
+    sdof_etiket_tablosu().to_csv(CIKTI / "sdof_etiket_tablosu.csv", index=False, encoding="utf-8-sig")
+    sdof_girdi_tablosu().to_csv(CIKTI / "sdof_girdi_tablosu.csv", index=False, encoding="utf-8-sig")
+    sdof_dosya_envanteri().to_csv(CIKTI / "sdof_dosya_envanteri.csv", index=False, encoding="utf-8-sig")
     ozet = (senv.groupby(["senaryo", "Label", "Description"])
-            .agg(dosya=("dosya", "size"), ilk=("Date", "min"), son=("Date", "max"))
+            .agg(dosya=("dosya", "size"), ilk=("Date", "min"), son=("Date", "max"),
+                 nan_iceren_dosya=("nan_sayisi", lambda s: int((s > 0).sum())),
+                 tum_degerler_sifir_dosya=("tum_degerler_sifir", "sum"))
             .reset_index())
     ozet.to_csv(CIKTI / "sdof_ozet.csv", index=False, encoding="utf-8-sig")
     print("\nSDOF - senaryo/etiket özeti:")
