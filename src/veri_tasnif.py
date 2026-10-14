@@ -1,10 +1,16 @@
 """
-ENG401 - Veri tasnifi (İP2: veri sözlüğü + kayıt envanteri + ilk kalite kontrolü)
+ENG401 - Veri tasnifi: iki veri setinin kayıt envanteri
 
 Çalıştırma:  python src/veri_tasnif.py
 Çıktılar  :  src/output/  klasörüne CSV tabloları ve örnek grafikler
 
 Gerekli paketler:  pip install h5py numpy pandas matplotlib
+
+Kaynak kısaltmaları (yorumlarda):
+  [V] veri dosyasının kendisi (h5 attribute'ları, txt/csv sütunları)
+  [M] Whelan vd. (2025) makalesi, J. Bridge Eng. 30(7)
+  [Z] SDOF SHM benchmark Zenodo sayfası (doi:10.5281/zenodo.17900302)
+  [N] SDOF veri setiyle gelen notebook'lar (dataset/code/*.ipynb)
 """
 from pathlib import Path
 
@@ -21,6 +27,7 @@ def welch(x, fs, nperseg):
                     window=mlab.window_hanning, detrend="mean")
     return f, P
 
+
 PROJE = Path(__file__).resolve().parents[1]
 DATA = PROJE / "dataset"
 CIKTI = PROJE / "src" / "output"
@@ -29,9 +36,6 @@ CIKTI.mkdir(parents=True, exist_ok=True)
 RT345_H5 = DATA / "Rt345Bridge.h5"
 SDOF_OUT = DATA / "output" / "output"
 SDOF_IN = DATA / "input" / "input"
-
-G = 9.81
-SENSOR_LIMIT = 2 * G  # LIS2L02AL tam ölçek ±2 g -> doygunluk eşiği
 
 
 def _txt(v):
@@ -47,19 +51,32 @@ def _txt(v):
 # =============================================================================
 # 1) ROUTE 345 BRIDGE  (tek .h5 dosyası)
 # =============================================================================
-# Hiyerarşi:  /<senaryo>/acceleration/<test_k>/<A01..A30>/{y,z}
-#             /<senaryo>/strain/<west|center|east>_lane/<S01..S20>
-#             /<senaryo>/photographs/<1..>
-RT345_SENARYO = {  # makaledeki Table 2 sırası
-    "baseline_1": (1, "saglikli"),
-    "damage_1": (2, "hasarli"),
-    "damage_2": (3, "hasarli"),
-    "baseline_2": (4, "saglikli"),
-    "damage_3": (5, "hasarli"),
-    "damage_4": (6, "hasarli"),
-    "damage_5": (7, "hasarli"),
-    "damage_6": (8, "hasarli"),
+# Hiyerarşi [V][M Fig. 7]:
+#   /<senaryo>/acceleration/<test_k>/<A01..A30>/{y,z}
+#   /<senaryo>/strain/<west|center|east>_lane/<S01..S20>
+#   /<senaryo>/photographs/<1..>
+
+# [M Table 2] Deney sırası ve case numaraları. h5'te gruplar alfabetik sıralı
+# (baseline_1, baseline_2, damage_1 ...); deneyin gerçek sırası sadece makalede var.
+RT345_MAKALE_TABLO2 = {
+    "baseline_1": (1, "Initial baseline"),
+    "damage_1": (2, "Damage scenario 1"),
+    "damage_2": (3, "Damage scenario 2"),
+    "baseline_2": (4, "Second baseline"),
+    "damage_3": (5, "Damage scenario 3"),
+    "damage_4": (6, "Damage scenario 4"),
+    "damage_5": (7, "Damage scenario 5"),
+    "damage_6": (8, "Damage scenario 6"),
 }
+
+# [M] "The full-scale range of the sensor is ±2 g". h5'te sensör tipi (LIS2L02AL)
+# yazıyor ama ölçüm aralığı yazmıyor; bu yüzden değer makaleden alındı.
+OLCUM_ARALIGI = 2 * 9.81  # m/s^2
+
+# [M] "the wireless sensor node interfaced to the accelerometer at Location A14 did not
+# respond ... data from this location are not contained in the archived data for
+# Damage scenario 6." Dosyada bu kanal sıfırlarla dolu; nedeni makalede.
+RT345_MAKALE_NOTU = {("damage_6", "A14"): "Makale: A14 düğümü bu senaryoda veri göndermedi"}
 
 
 def h5_agaci_yazdir(path, max_derinlik=4):
@@ -82,7 +99,7 @@ def h5_agaci_yazdir(path, max_derinlik=4):
 
 
 def rt345_ivme_oku(senaryo, test, sensor, yon="z"):
-    """Tek bir ivme kaydını (m/s^2) ve zaman eksenini döndürür."""
+    """Tek bir ivme kaydını ve zaman eksenini döndürür (birim h5'teki 'unit' attribute'u)."""
     with h5py.File(RT345_H5, "r") as f:
         ds = f[senaryo]["acceleration"][test][sensor]
         x = ds[yon][()].ravel()  # (1, N) -> (N,)
@@ -100,77 +117,78 @@ def rt345_kayit_matrisi(senaryo, test):
 
 
 def rt345_envanter():
-    """Her (senaryo, test, sensör, yön) için bir satır: veri sözlüğü + basit kalite bayrakları."""
+    """Her (senaryo, test, sensör, yön) için bir satır: h5 metadata'sı + sinyal istatistikleri."""
     satirlar = []
     with h5py.File(RT345_H5, "r") as f:
-        for sc, (case_no, durum) in RT345_SENARYO.items():
+        for sc, (case_no, makale_adi) in RT345_MAKALE_TABLO2.items():
             g = f[sc]
             for test, T in g["acceleration"].items():
-                zaman = _txt(T.attrs["time"])
                 for sensor, S in T.items():
                     pos = S.attrs["position"]
                     fs = float(_txt(S.attrs["sample_rate"]))
                     for yon in ("y", "z"):
                         x = S[yon][()].ravel()
-                        sabit = np.allclose(x, x[0]) if x.size else True
+                        max_abs = float(np.nanmax(np.abs(x)))
                         satirlar.append(dict(
-                            senaryo=sc, case_no=case_no, durum=durum,
-                            hasar_tipi=_txt(g.attrs["damage_type"]),
-                            hasar_yeri=_txt(g.attrs["damage_location"]),
-                            hasar_siddeti=_txt(g.attrs["damage_severity"]),
-                            test=test, kayit_id=f"{sc}/{test}", zaman=zaman,
+                            senaryo=sc,
+                            case_no=case_no,                                  # [M Table 2]
+                            makale_senaryo_adi=makale_adi,                    # [M Table 2]
+                            damage_state=_txt(g.attrs["damage_state"]),       # [V]
+                            damage_type=_txt(g.attrs["damage_type"]),         # [V]
+                            damage_location=_txt(g.attrs["damage_location"]), # [V]
+                            damage_severity=_txt(g.attrs["damage_severity"]), # [V]
+                            test=test, kayit_id=f"{sc}/{test}",
+                            zaman=_txt(T.attrs["time"]),                      # [V]
                             sensor=sensor, yon=yon,
-                            konum=_txt(S.attrs["location"]),
-                            x_m=pos[0], y_m=pos[1], z_m=pos[2],
-                            fs_hz=fs, n_ornek=x.size, sure_s=x.size / fs,
-                            birim=_txt(S.attrs["unit"]),
+                            location=_txt(S.attrs["location"]),               # [V]
+                            x_m=pos[0], y_m=pos[1], z_m=pos[2],               # [V]
+                            sample_rate_hz=fs,                                # [V]
+                            unit=_txt(S.attrs["unit"]),                       # [V]
+                            n_ornek=x.size, sure_s=x.size / fs,
                             nan_sayisi=int(np.isnan(x).sum()),
-                            std=float(np.nanstd(x)), rms=float(np.sqrt(np.nanmean(x**2))),
-                            max_abs=float(np.nanmax(np.abs(x))),
-                            kalite_sabit_sinyal=bool(sabit),
-                            kalite_doygunluk=bool(np.nanmax(np.abs(x)) >= 0.98 * SENSOR_LIMIT),
+                            tum_degerler_sifir=bool(np.all(x == 0)),
+                            std=float(np.nanstd(x)),
+                            rms=float(np.sqrt(np.nanmean(x**2))),
+                            max_abs=max_abs,
+                            olcum_araligi_asildi=max_abs > OLCUM_ARALIGI,     # [M] ±2 g
+                            makale_notu=RT345_MAKALE_NOTU.get((sc, sensor), ""),
                         ))
-    df = pd.DataFrame(satirlar).sort_values(["case_no", "test", "sensor", "yon"])
-    # Kalite: aynı sensör/yön için std, diğer kayıtların medyanından çok farklıysa işaretle
-    med = df.groupby(["sensor", "yon"])["std"].transform("median")
-    df["kalite_std_aykiri"] = (df["std"] > 5 * med) | (df["std"] < med / 5)
-    df["kalite_ok"] = ~(df.kalite_sabit_sinyal | df.kalite_doygunluk
-                        | df.kalite_std_aykiri | (df.nan_sayisi > 0))
-    return df
+    return pd.DataFrame(satirlar).sort_values(["case_no", "test", "sensor", "yon"])
 
 
 def rt345_kayit_tablosu(env):
-    """Kayıt (test) bazında özet + önerilen eğitim/kalibrasyon/test rolü.
-
-    Pencereler kayıt bazında ayrılmalı (veri sızıntısı olmasın). Öneri:
-      baseline_1 -> eğitim (sağlıklı davranışı öğren)
-      baseline_2 -> kalibrasyon/test (bağımsız sağlıklı: yanlış alarm oranı + eşik τ)
-      damage_*   -> test (tespit oranı)
-    """
-    k = (env.groupby(["case_no", "senaryo", "test", "kayit_id", "durum", "hasar_tipi",
-                      "hasar_yeri", "hasar_siddeti", "zaman", "fs_hz", "n_ornek", "sure_s"])
-         .agg(sensor_sayisi=("sensor", "nunique"),
-              bozuk_kanal=("kalite_ok", lambda s: int((~s).sum())),
-              bozuk_kanal_listesi=("kalite_ok", lambda s: ", ".join(
-                  sorted(set(env.loc[s[~s].index, "sensor"] + "-" + env.loc[s[~s].index, "yon"]))))
-              ).reset_index())
-    rol = {"baseline_1": "egitim", "baseline_2": "kalibrasyon/test-saglikli"}
-    k["onerilen_rol"] = k.senaryo.map(rol).fillna("test-hasarli")
-    return k
+    """Kayıt (senaryo/test) bazında özet."""
+    def kanal_listesi(maske):
+        return ", ".join(sorted(set(env.loc[maske.index[maske], "sensor"] + "-"
+                                    + env.loc[maske.index[maske], "yon"])))
+    return (env.groupby(["case_no", "senaryo", "makale_senaryo_adi", "test", "kayit_id",
+                         "damage_type", "damage_location", "damage_severity", "zaman",
+                         "sample_rate_hz", "n_ornek", "sure_s"])
+            .agg(sensor_sayisi=("sensor", "nunique"),
+                 tum_degerler_sifir_kanallar=("tum_degerler_sifir", kanal_listesi),
+                 olcum_araligi_asan_kanallar=("olcum_araligi_asildi", kanal_listesi),
+                 makale_notu=("makale_notu", lambda s: "; ".join(sorted(set(s) - {""}))))
+            .reset_index())
 
 
 def rt345_ornek_grafik():
-    """Makaledeki Fig. 6a'ya karşılık: A21 düşey ivme + PSD (sağlıklı vs hasarlı)."""
-    fig, ax = plt.subplots(2, 1, figsize=(10, 7))
-    for sc in ("baseline_1", "damage_4"):
-        t, x, fs = rt345_ivme_oku(sc, "test_1", "A21", "z")
-        ax[0].plot(t, x, lw=0.5, label=sc)
+    """A21 düşey ivme. A21 seçildi çünkü makalede örnek veri olarak gösterilen
+    sensör bu [M Fig. 6a]. Üstte baseline_1/test_1 zaman serisi, altta 8 senaryonun
+    test_1 kayıtlarının PSD'si."""
+    fig, ax = plt.subplots(2, 1, figsize=(10, 8))
+    t, x, fs = rt345_ivme_oku("baseline_1", "test_1", "A21", "z")
+    ax[0].plot(t, x, lw=0.5)
+    ax[0].set(xlabel="Zaman (s)", ylabel="İvme (h5 'unit': m/s²)",
+              title="A21 - z (düşey), baseline_1 / test_1")
+    for sc in RT345_MAKALE_TABLO2:
+        _, x, fs = rt345_ivme_oku(sc, "test_1", "A21", "z")
         f, P = welch(x, fs=fs, nperseg=2048)
-        ax[1].semilogy(f, P, lw=1, label=sc)
-    ax[0].set(xlabel="Zaman (s)", ylabel="İvme (m/s²)", title="A21 - z (düşey), test_1")
-    ax[1].set(xlabel="Frekans (Hz)", ylabel="PSD", xlim=(0, 64))
+        ax[1].semilogy(f, P, lw=0.9, label=sc)
+    ax[1].set(xlabel="Frekans (Hz)", ylabel="PSD", xlim=(0, 64),
+              title="A21 - z, test_1, tüm senaryolar")
+    ax[1].legend(fontsize=8, ncol=2)
     for a in ax:
-        a.legend(); a.grid(alpha=0.3)
+        a.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(CIKTI / "rt345_A21_ornek.png", dpi=130)
     plt.close(fig)
@@ -179,66 +197,77 @@ def rt345_ornek_grafik():
 # =============================================================================
 # 2) SDOF SHM BENCHMARK  (her saat için ayrı küçük .h5 + txt etiketler)
 # =============================================================================
-# acceleration/<Dx>/accNNNNN-k.h5  ->  içinde tek dataset: 'acc', shape (1, 18000) = 3 dk @ 100 Hz
-# NNNNN = saat indeksi (0 = 2020-01-01 00:00), labels/*.txt satır 'Index' ile birebir eşleşir.
-SDOF_SENARYO = {  # klasör: (etiket dosyası, açıklama)
-    "D1": ("1_D1_labels.txt", "Hasarsız, sadece çevresel/operasyonel değişkenlik (EOV)"),
-    "D2_1": ("2_D2.1_labels.txt", "Ani rijitlik kaybı -10%"),
-    "D2_2": ("3_D2.2_labels.txt", "Ani hasar, aylık -1% artan (-18%e kadar)"),
-    "D2_3": ("4_D2.3_labels.txt", "Ani hasar, ikiye katlanan (-1..-32%)"),
-    "D3_1": ("5_D3.1_labels.txt", "Yavaş hasar (korozyon) L1"),
-    "D3_2": ("6_D3.2_labels.txt", "Yavaş hasar (korozyon) L2"),
-    "D3_3": ("7_D3.3_labels.txt", "Yavaş hasar (korozyon) L3"),
-    "D4": ("8_D4_labels.txt", "Sensör arızaları (SFM) - yapı hasarsız"),
-    "D5": ("9_D5_labels.txt", "Ani + yavaş hasar birlikte"),
+# acceleration/<Dx>/accNNNNN-k.h5 -> içinde tek dataset 'acc', shape (1, 18000) [V]
+# 3 dakika @ 100 Hz [Z]
+# Klasör -> etiket dosyası eşleşmesi dosya adlarından [V]: 1_D1, 2_D2.1, ... 9_D5
+SDOF_ETIKET_DOSYASI = {
+    "D1": "1_D1_labels.txt",
+    "D2_1": "2_D2.1_labels.txt",
+    "D2_2": "3_D2.2_labels.txt",
+    "D2_3": "4_D2.3_labels.txt",
+    "D3_1": "5_D3.1_labels.txt",
+    "D3_2": "6_D3.2_labels.txt",
+    "D3_3": "7_D3.3_labels.txt",
+    "D4": "8_D4_labels.txt",
+    "D5": "9_D5_labels.txt",
 }
-SDOF_SINIF = {0: "saglikli", 1: "hasar_ani", 2: "hasar_yavas", 4: "hasar_ani+yavas", 7: "sensor_arizasi"}
+SDOF_FS = 100.0  # [Z] "3-minute signals at 100 Hz"
+
+
+def sdof_zaman_izgarasi():
+    """Saat indeksi -> tarih. Notebook'lardaki tanımın aynısı [N 2_SDOF, 3_SHM]:
+    2020-01-01 00:00'dan saatlik, 29 Şubat'lar çıkarılmış ('erase feb 29').
+    3_SHM.ipynb dosya adını bu dizinin sırası ile veriyor: acc{i:05d}-1.h5"""
+    t = pd.date_range("2020-01-01 00:00", "2023-12-31 23:00", freq="h")
+    t = t[~((t.month == 2) & (t.day == 29))]
+    return pd.DataFrame({"Index": np.arange(len(t)), "Date": t})
 
 
 def sdof_ivme_oku(senaryo, saat_index):
     path = next((SDOF_OUT / "acceleration" / senaryo).glob(f"acc{saat_index:05d}-*.h5"))
     with h5py.File(path, "r") as f:
         x = f["acc"][()].ravel().astype(np.float64)
-    fs = 100.0
-    return np.arange(x.size) / fs, x, fs
+    return np.arange(x.size) / SDOF_FS, x, SDOF_FS
 
 
 def sdof_envanter():
-    """Her saatlik dosya için bir satır: tarih, etiket, sıcaklık, trafik yükü."""
+    """Her saatlik ivme dosyası için bir satır: etiket [V] + tarih [N] + sıcaklık/yük [V]."""
     yuk = pd.read_csv(SDOF_IN / "load" / "1_totLoad.txt", sep="\t", parse_dates=["Date"])
     sic = pd.read_csv(SDOF_IN / "temperature" / "1_temperature.txt", sep="\t", parse_dates=["Date"])
-    yuk = yuk.merge(sic, on="Date", how="left")
-    yuk["Index"] = np.arange(len(yuk))  # etiket dosyalarındaki Index ile aynı saat ızgarası
+    zaman = sdof_zaman_izgarasi().merge(sic, on="Date", how="left").merge(yuk, on="Date", how="left")
 
     parcalar = []
-    for sc, (lab_dosya, aciklama) in SDOF_SENARYO.items():
+    for sc, lab_dosya in SDOF_ETIKET_DOSYASI.items():
         dosyalar = sorted((SDOF_OUT / "acceleration" / sc).glob("acc*.h5"))
-        idx = [int(p.stem[3:8]) for p in dosyalar]
-        d = pd.DataFrame({"senaryo": sc, "Index": idx, "dosya": [p.name for p in dosyalar]})
-        lab = pd.read_csv(SDOF_OUT / "labels" / lab_dosya, sep="\t")
-        d = d.merge(lab, on="Index", how="left").merge(yuk, on="Index", how="left")
-        d["senaryo_aciklama"] = aciklama
-        parcalar.append(d)
-    df = pd.concat(parcalar, ignore_index=True)
-    df["sinif"] = df["Label"].map(SDOF_SINIF)
-    return df.rename(columns={"Date": "tarih", "Temperature": "sicaklik_C",
-                              "TotLoad": "toplam_yuk", "Description": "aciklama",
-                              "Level/Type": "seviye"})
+        d = pd.DataFrame({"senaryo": sc,
+                          "Index": [int(p.stem[3:8]) for p in dosyalar],
+                          "dosya": [p.name for p in dosyalar]})
+        # keep_default_na=False: dosyadaki "N/A" metni boş hücreye çevrilmesin
+        lab = pd.read_csv(SDOF_OUT / "labels" / lab_dosya, sep="\t", keep_default_na=False)
+        parcalar.append(d.merge(lab, on="Index", how="left").merge(zaman, on="Index", how="left"))
+    return pd.concat(parcalar, ignore_index=True)
 
 
-def sdof_ornek_grafik(env):
-    fig, ax = plt.subplots(2, 1, figsize=(10, 7))
-    for sc, idx in (("D1", 20000), ("D2_3", 20000)):
-        t, x, fs = sdof_ivme_oku(sc, idx)
-        r = env[(env.senaryo == sc) & (env.Index == idx)].iloc[0]
-        etiket = f"{sc} #{idx} ({r.sinif}, {r.seviye}, {r.sicaklik_C:.1f}°C)"
-        ax[0].plot(t, x, lw=0.5, label=etiket)
+def sdof_ornek_grafik():
+    """Üstte acc00000-1.h5 (veri setinin 4_SFM.ipynb notebook'unda örnek olarak açılan
+    dosya [N]). Altta saat 26278'in PSD'si: D4 dışındaki tüm klasörlerde bulunan son
+    saat [V]; D4 klasöründe bu saatin dosyası yok."""
+    fig, ax = plt.subplots(2, 1, figsize=(10, 8))
+    t, x, fs = sdof_ivme_oku("D1", 0)
+    ax[0].plot(t, x, lw=0.5)
+    ax[0].set(xlabel="Zaman (s)", ylabel="acc", title="SDOF - D1 / acc00000-1.h5")
+    idx = 26278
+    for sc in SDOF_ETIKET_DOSYASI:
+        if not list((SDOF_OUT / "acceleration" / sc).glob(f"acc{idx:05d}-*.h5")):
+            continue
+        _, x, fs = sdof_ivme_oku(sc, idx)
         f, P = welch(x, fs=fs, nperseg=4096)
-        ax[1].semilogy(f, P, lw=1, label=etiket)
-    ax[0].set(xlabel="Zaman (s)", ylabel="İvme", title="SDOF - aynı saat, sağlıklı vs hasarlı")
-    ax[1].set(xlabel="Frekans (Hz)", ylabel="PSD", xlim=(0, 20))
+        ax[1].semilogy(f, P, lw=0.9, label=sc)
+    ax[1].set(xlabel="Frekans (Hz)", ylabel="PSD", xlim=(0, 20),
+              title=f"SDOF - saat {idx}, tüm senaryolar")
+    ax[1].legend(fontsize=8, ncol=2)
     for a in ax:
-        a.legend(fontsize=8); a.grid(alpha=0.3)
+        a.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(CIKTI / "sdof_ornek.png", dpi=130)
     plt.close(fig)
@@ -253,18 +282,18 @@ if __name__ == "__main__":
     kayit = rt345_kayit_tablosu(env)
     kayit.to_csv(CIKTI / "rt345_kayit_tablosu.csv", index=False, encoding="utf-8-sig")
     print("\nRoute 345 - kayıt tablosu:")
-    print(kayit[["kayit_id", "durum", "sure_s", "sensor_sayisi", "bozuk_kanal",
-                 "bozuk_kanal_listesi", "onerilen_rol"]].to_string(index=False))
+    print(kayit[["kayit_id", "sure_s", "sensor_sayisi", "tum_degerler_sifir_kanallar",
+                 "olcum_araligi_asan_kanallar", "makale_notu"]].to_string(index=False))
     rt345_ornek_grafik()
 
     # --- SDOF ---
     senv = sdof_envanter()
     senv.to_csv(CIKTI / "sdof_kayit_envanteri.csv", index=False, encoding="utf-8-sig")
-    ozet = (senv.groupby(["senaryo", "sinif"])
-            .agg(dosya=("dosya", "size"), ilk=("tarih", "min"), son=("tarih", "max"))
+    ozet = (senv.groupby(["senaryo", "Label", "Description"])
+            .agg(dosya=("dosya", "size"), ilk=("Date", "min"), son=("Date", "max"))
             .reset_index())
     ozet.to_csv(CIKTI / "sdof_ozet.csv", index=False, encoding="utf-8-sig")
-    print("\nSDOF - senaryo/sınıf özeti:")
+    print("\nSDOF - senaryo/etiket özeti:")
     print(ozet.to_string(index=False))
-    sdof_ornek_grafik(senv)
+    sdof_ornek_grafik()
     print(f"\nÇıktılar: {CIKTI}")
