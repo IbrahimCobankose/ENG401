@@ -14,3 +14,9 @@ dataset/**
 __pycache__/
 *.pyc
 ~$*
+
+# Hocanın SAP2000 modeli: paylaşılmayacak
+*.sdb
+
+# Eski (hatalı) ilk tasnif: yerelde arşiv olarak duruyor, repoya eklenmiyor
+_eski_tasnif/
