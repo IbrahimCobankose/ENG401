@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rt345 Mode Shapes</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f22; --muted: #62676e; --line: #d9d7d0;
+    --accent: #2f5bd3; --accent-ink: #ffffff; --ghost: #8d939b; --sensor: #1d1f22;
+    --neg: #3b6fd8; --mid: #d8d6cf; --pos: #e0682b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #a0a6ae; --line: #33373d;
+      --accent: #7c9cff; --accent-ink: #0d1020; --ghost: #6c727b; --sensor: #e8e6e1; --mid: #55585e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #a0a6ae; --line: #33373d;
+    --accent: #7c9cff; --accent-ink: #0d1020; --ghost: #6c727b; --sensor: #e8e6e1; --mid: #55585e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 12px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .panel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); }
+  h1 { font-size: 13px; margin: 0; font-weight: 650; white-space: nowrap; }
+  .group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+  .caption { font-size: 11px; color: var(--muted); margin-right: 2px; }
+  button { font: inherit; padding: 3px 7px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  input[type=range] { width: 90px; accent-color: var(--accent); }
+  output { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 36px; }
+  label.check { display: flex; gap: 4px; align-items: center; cursor: pointer; white-space: nowrap; }
+  label.check input { margin: 0; }
+  .segmented { display: inline-flex; }
+  .segmented button { border-radius: 0; margin-left: -1px; }
+  .segmented button:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+  .segmented button:last-child { border-radius: 0 5px 5px 0; }
+  .info { position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted);
+    font-size: 10px; font-style: italic; font-weight: 700; cursor: help; }
+  .info .tooltip { display: none; position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 5;
+    width: min(290px, calc(100vw - 32px));
+    padding: 8px 10px; border-radius: 6px; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    box-shadow: 0 4px 14px rgb(0 0 0 / .15); font: 11.5px/1.45 system-ui, sans-serif; font-style: normal; font-weight: 400; }
+  .info:hover .tooltip, .info:focus .tooltip { display: block; }
+  #scene { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  #scene canvas { display: block; }
+  .legend { position: absolute; right: 10px; top: 8px; width: 170px; font-size: 11px; color: var(--muted);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); padding: 6px 8px; border-radius: 6px; pointer-events: none; }
+  .colorbar { height: 7px; border-radius: 4px; background: linear-gradient(90deg, var(--neg), var(--mid), var(--pos)); }
+  .colorbar-text { display: flex; justify-content: space-between; margin-top: 2px; }
+  .dash { display: inline-block; width: 18px; vertical-align: middle; border-top: 2px dashed var(--ghost); margin-right: 4px; }
+  .lbl { font-size: 10px; line-height: 1.2; color: var(--ink); background: color-mix(in srgb, var(--panel) 85%, transparent);
+    padding: 0 3px; border-radius: 3px; pointer-events: none; white-space: nowrap; text-align: center;
+    font-variant-numeric: tabular-nums; }
+  .arrow-lbl { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+    background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 0 3px; border-radius: 3px; }
+  .arrow-line { display: inline-block; width: 18px; vertical-align: middle; border-top: 2px solid; margin-right: 4px; }
+  .dim { font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--bg) 85%, transparent);
+    padding: 0 3px; border-radius: 3px; white-space: nowrap; pointer-events: none; }
+  .axis-lbl { font-size: 11px; font-weight: 600; pointer-events: none; }
+  footer { padding: 4px 12px 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+  footer summary { cursor: pointer; }
+  footer ul { margin: 4px 0 2px; padding-left: 16px; }
+  @media (max-width: 600px) { .panel, footer { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>Rt345 — Undamaged Mode Shapes</h1>
+  <div class="group"><span class="caption">Scenario</span><span id="scenarioButtons" class="group"></span></div>
+  <div class="group"><span class="caption">Mode</span><span id="modeButtons" class="group"></span></div>
+  <div class="group"><span class="caption">Scaling</span>
+    <input type="range" id="scale" min="0" max="3" step="0.1" value="1.2" aria-label="Scaling"><output id="scaleOut"></output>
+    <span class="info" tabindex="0" aria-label="What is scaling">i<span class="tooltip">
+      Mode shape values are <b>relative</b> within ±1: the point that moves most is 1, the others are proportional to it.
+      The actual displacement (mm) is not part of a mode shape; it depends on the traffic and wind at that moment.<br><br>
+      Scaling sets <b>how many metres a value of 1 is drawn on screen</b>. For example, at 1.2 m a sensor with
+      z = −0.5 is drawn 0.6 m below its rest position. It is a visualization scale, not a real displacement;
+      the same scale is applied to y and z.</span></span>
+    <button id="animate" aria-pressed="false">Animation</button></div>
+  <div class="group">
+    <label class="check"><input type="checkbox" id="restToggle" checked> Rest position</label>
+    <label class="check"><input type="checkbox" id="namesToggle"> Sensor names</label>
+    <label class="check"><input type="checkbox" id="arrowsToggle"> y / z arrows</label>
+    <span class="segmented" id="valueMode"><button data-mode="rounded" aria-pressed="true">Rounded</button><button data-mode="full" aria-pressed="false">Full value</button></span>
+    <label class="check"><input type="checkbox" id="dimsToggle" checked> Dimensions</label>
+  </div>
+</div>
+
+<div id="scene">
+  <div class="legend">
+    <div class="colorbar"></div>
+    <div class="colorbar-text"><span>z −</span><span>0</span><span>z +</span></div>
+    <div style="margin-top:4px"><span class="dash"></span>rest position</div>
+    <div><span class="arrow-line" style="border-color:#2e9b5a"></span>y arrow (lateral)</div>
+    <div><span class="arrow-line" style="border-color:#2f6fd8"></span>z arrow (vertical)</div>
+  </div>
+</div>
+
+<footer><details><summary>Data and assumptions</summary>
+  <ul>
+    <li>Mode shape values: xlsx files obtained from the modal analysis of the classified data (Baseline 1–2, Test 1–3, y and z, Mode 1–8). The values are normalized to ±1 and relative; the actual amplitude and the y/z ratio are not included, so scaling is visual and the same for y and z.</li>
+    <li>Sensor positions and all lengths are taken from the 'position' attributes of A01–A30 in <b>Rt345Bridge.h5</b>, since the mode shape files contain no positions.</li>
+    <li>Row i of each xlsx file is read as sensor A<i>i</i>. Modes with the same number in the y and z files are taken as the same mode. The sign (+/−) of a mode shape is arbitrary.</li>
+    <li>Only the area covered by the sensors is drawn; supports, span and cross-sections are not shown.</li>
+  </ul>
+</details></footer>
+
+<script>window.DATA = /*__DATA__*/null;</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+const D = window.DATA;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 2) => v.toFixed(d).replace("-", "−");
+
+// --- h5 coordinates (X longitudinal, Y lateral, Z vertical) -> three (x, y = up, z) ---
+const P = D.sensors.map(s => D.positions[s]);
+const Xs = [...new Set(P.map(p => p[0]))].sort((a, b) => a - b);
+const Ys = [...new Set(P.map(p => p[1]))].sort((a, b) => a - b);
+const cx = (Xs[0] + Xs.at(-1)) / 2, cy = (Ys[0] + Ys.at(-1)) / 2;
+const h2t = (X, Y, Z) => new THREE.Vector3(X - cx, Z, -(Y - cy));
+const rest = P.map(([X, Y, Z]) => h2t(X, Y, Z));
+// Grid: same Y = same girder line, same X = same cross-section (derived from the data)
+const grid = Ys.map(Y => Xs.map(X => P.findIndex(p => p[0] === X && p[1] === Y)));
+
+const Zs = P.map(p => p[2]);
+
+// --- scene ---
+const host = $("scene");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+const labelRenderer = new CSS2DRenderer();
+Object.assign(labelRenderer.domElement.style, { position: "absolute", top: "0", pointerEvents: "none" });
+host.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+camera.position.set(-8, 7.5, 11.5);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.target.set(0, 0, 0);
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const dl = new THREE.DirectionalLight(0xffffff, 1.2); dl.position.set(5, 12, 8); scene.add(dl);
+
+function label(html, cls, parent, pos) {
+  const d = document.createElement("div"); d.className = cls; d.innerHTML = html;
+  const o = new CSS2DObject(d); o.position.copy(pos); parent.add(o); return o;
+}
+
+// Deck surface (grid cells)
+const nV = rest.length;
+const surfaceGeo = new THREE.BufferGeometry();
+surfaceGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(nV * 3), 3));
+surfaceGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(nV * 3), 3));
+const idx = [];
+for (let r = 0; r < Ys.length - 1; r++) for (let c = 0; c < Xs.length - 1; c++) {
+  const a = grid[r][c], b = grid[r][c + 1], d = grid[r + 1][c], e = grid[r + 1][c + 1];
+  idx.push(a, b, e, a, e, d);
+}
+surfaceGeo.setIndex(idx);
+scene.add(new THREE.Mesh(surfaceGeo, new THREE.MeshLambertMaterial({
+  vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })));
+
+// Longitudinal and transverse grid lines
+const pairs = [];
+grid.forEach(row => row.slice(1).forEach((v, i) => pairs.push([row[i], v])));
+Xs.forEach((_, c) => grid.slice(1).forEach((row, r) => pairs.push([grid[r][c], row[c]])));
+function lineSet(mat) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pairs.length * 6), 3));
+  return new THREE.LineSegments(g, mat);
+}
+function writeLines(lines, pts) {
+  const a = lines.geometry.attributes.position.array;
+  pairs.forEach(([i, j], k) => { pts[i].toArray(a, k * 6); pts[j].toArray(a, k * 6 + 3); });
+  lines.geometry.attributes.position.needsUpdate = true; lines.geometry.computeBoundingSphere();
+}
+const gridLines = lineSet(new THREE.LineBasicMaterial({ color: css("--sensor") })); scene.add(gridLines);
+// Rest position: dashed grey lines + small points
+const restGroup = new THREE.Group(); scene.add(restGroup);
+const restLines = lineSet(new THREE.LineDashedMaterial({ color: css("--ghost"), dashSize: 0.18, gapSize: 0.12 }));
+writeLines(restLines, rest); restLines.computeLineDistances(); restGroup.add(restLines);
+const smallSphere = new THREE.SphereGeometry(0.05, 10, 8), ghostMat = new THREE.MeshBasicMaterial({ color: css("--ghost") });
+rest.forEach(p => { const m = new THREE.Mesh(smallSphere, ghostMat); m.position.copy(p); restGroup.add(m); });
+
+// Sensor points + labels
+const sphere = new THREE.SphereGeometry(0.09, 16, 12);
+const sensorMat = new THREE.MeshLambertMaterial({ color: css("--sensor") });
+const points = rest.map(p => {
+  const m = new THREE.Mesh(sphere, sensorMat); scene.add(m);
+  m.userData.lbl = label("", "lbl", m, new THREE.Vector3(0, 0.32, 0)); return m;
+});
+
+// y / z arrows: direction and size of the mode value at each sensor (±1 -> ARROW_L m, independent of scaling)
+const ARROW_L = 0.8, COLOR_Y = 0x2e9b5a, COLOR_Z = 0x2f6fd8;
+const arrowGroup = new THREE.Group(); arrowGroup.visible = false; scene.add(arrowGroup);
+const arrows = rest.map(() => {
+  const ay = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 0.5, COLOR_Y, 0.12, 0.08);
+  const az = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.5, COLOR_Z, 0.12, 0.08);
+  // keep arrows that point below the surface visible
+  [ay, az].forEach(o => o.traverse(m => { if (m.material) m.material.depthTest = false; m.renderOrder = 10; }));
+  arrowGroup.add(ay, az);
+  const ly = label("", "arrow-lbl", arrowGroup, new THREE.Vector3()), lz = label("", "arrow-lbl", arrowGroup, new THREE.Vector3());
+  ly.element.style.color = "#2e9b5a"; lz.element.style.color = "#2f6fd8";
+  return { ay, az, ly, lz };
+});
+const DIR_Y = new THREE.Vector3(0, 0, -1), DIR_Z = new THREE.Vector3(0, 1, 0);
+function updateArrow(arrow, lbl, dir, v, origin) {
+  const L = Math.abs(v) * ARROW_L, d = dir.clone().multiplyScalar(Math.sign(v) || 1);
+  arrow.visible = L > 0.02 && arrowGroup.visible;
+  if (arrow.visible) { arrow.position.copy(origin); arrow.setDirection(d); arrow.setLength(L, Math.min(0.12, L * 0.5), 0.08); }
+  lbl.visible = arrowGroup.visible;
+  lbl.position.copy(origin).addScaledVector(d, L + 0.15);
+}
+
+// Dimensions and axes (relative to the rest position)
+const dims = new THREE.Group(); scene.add(dims);
+{
+  const mat = new THREE.LineBasicMaterial({ color: css("--muted") });
+  const off = 0.9, x0 = Xs[0], x1 = Xs.at(-1), y0 = Ys[0], y1 = Ys.at(-1), zb = Math.min(...Zs);
+  const draw = pts => dims.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+  // along X (outside the y0 edge)
+  const a = h2t(x0, y0 - off, zb), b = h2t(x1, y0 - off, zb);
+  draw([a, b]); draw([h2t(x0, y0 - off * 0.7, zb), h2t(x0, y0 - off * 1.3, zb)]);
+  draw([h2t(x1, y0 - off * 0.7, zb), h2t(x1, y0 - off * 1.3, zb)]);
+  label(`${fmt(x1 - x0)} m (X, longitudinal)`, "dim", dims, a.clone().lerp(b, 0.5));
+  // along Y (outside the x0 edge)
+  const c = h2t(x0 - off, y0, zb), d = h2t(x0 - off, y1, zb);
+  draw([c, d]); draw([h2t(x0 - off * 0.7, y0, zb), h2t(x0 - off * 1.3, y0, zb)]);
+  draw([h2t(x0 - off * 0.7, y1, zb), h2t(x0 - off * 1.3, y1, zb)]);
+  label(`${fmt(y1 - y0)} m (Y, lateral)`, "dim", dims, c.clone().lerp(d, 0.5));
+  // axis arrows: X, Y, Z (h5 directions)
+  const o = h2t(x0 - off, y0 - off, zb), L = 1.4;
+  const axis = (dir, color, name) => {
+    dims.add(new THREE.ArrowHelper(dir, o, L, color, 0.25, 0.14));
+    label(name, "axis-lbl", dims, o.clone().addScaledVector(dir, L + 0.3)).element.style.color = "#" + new THREE.Color(color).getHexString();
+  };
+  axis(new THREE.Vector3(1, 0, 0), 0xd0453a, "X");
+  axis(new THREE.Vector3(0, 0, -1), COLOR_Y, "Y");
+  axis(new THREE.Vector3(0, 1, 0), COLOR_Z, "Z");
+}
+
+// --- state and controls ---
+let scenario = 0, mode = 0, playing = false, t0 = performance.now(), phase = 1;
+function buttons(hostId, names, select) {
+  const k = $(hostId);
+  names.forEach((name, i) => {
+    const b = document.createElement("button"); b.textContent = name;
+    b.onclick = () => { select(i); [...k.children].forEach((x, j) => x.setAttribute("aria-pressed", j === i)); updateLabels(); };
+    b.setAttribute("aria-pressed", i === 0); k.appendChild(b);
+  });
+}
+buttons("scenarioButtons", D.scenarios.map(s => s.name), i => scenario = i);
+buttons("modeButtons", D.scenarios[0].z.map((_, i) => `Mode ${i + 1}`), i => mode = i);
+const showScale = () => $("scaleOut").value = fmt(+$("scale").value, 1) + " m"; $("scale").oninput = showScale; showScale();
+// When animation is off the mode shape stays at its peak (the values themselves)
+$("animate").onclick = e => { playing = !playing; e.target.setAttribute("aria-pressed", playing);
+  if (playing) t0 = performance.now() - 500; else phase = 1; };
+$("restToggle").onchange = e => restGroup.visible = e.target.checked;
+// CSS2D labels ignore the visibility of their parent group, so every object is switched individually
+$("dimsToggle").onchange = e => dims.traverse(o => o.visible = e.target.checked);
+$("namesToggle").onchange = $("arrowsToggle").onchange = updateLabels;
+// Arrow values: rounded to 2 decimals or the full value from the xlsx
+let valueMode = "rounded";
+const full = v => String(v).replace("-", "−");
+document.querySelectorAll("#valueMode button").forEach(b => b.onclick = () => {
+  valueMode = b.dataset.mode;
+  document.querySelectorAll("#valueMode button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  updateLabels();
+});
+
+function updateLabels() {
+  const names = $("namesToggle").checked, S = D.scenarios[scenario];
+  arrowGroup.visible = $("arrowsToggle").checked;
+  points.forEach((n, i) => {
+    n.userData.lbl.visible = names;
+    n.userData.lbl.element.innerHTML = `<b>${D.sensors[i]}</b>`;
+    const g = valueMode === "full" ? full : fmt;
+    arrows[i].ly.element.textContent = "y " + g(S.y[mode][i]);
+    arrows[i].lz.element.textContent = "z " + g(S.z[mode][i]);
+  });
+}
+updateLabels();
+
+const cNeg = new THREE.Color(css("--neg")), cPos = new THREE.Color(css("--pos")), cMid = new THREE.Color(css("--mid"));
+const current = rest.map(p => p.clone());
+
+function resize() {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h); labelRenderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(host); resize();
+
+function frame(now) {
+  if (playing) phase = Math.sin((now - t0) / 2000 * 2 * Math.PI);
+  const S = D.scenarios[scenario], fz = S.z[mode], fy = S.y[mode], k = +$("scale").value;
+  const pos = surfaceGeo.attributes.position.array, col = surfaceGeo.attributes.color.array, c = new THREE.Color();
+  rest.forEach((p, i) => {
+    // three: y = vertical (h5 Z), z = -(h5 Y)
+    current[i].set(p.x, p.y + k * fz[i] * phase, p.z - k * fy[i] * phase);
+    current[i].toArray(pos, i * 3); points[i].position.copy(current[i]);
+    const u = fz[i] * phase; c.copy(cMid).lerp(u < 0 ? cNeg : cPos, Math.min(1, Math.abs(u)));
+    c.toArray(col, i * 3);
+  });
+  surfaceGeo.attributes.position.needsUpdate = true; surfaceGeo.attributes.color.needsUpdate = true;
+  surfaceGeo.computeVertexNormals();
+  writeLines(gridLines, current);
+  arrows.forEach((a, i) => { updateArrow(a.ay, a.ly, DIR_Y, fy[i], current[i]); updateArrow(a.az, a.lz, DIR_Z, fz[i], current[i]); });
+  controls.update(); renderer.render(scene, camera); labelRenderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

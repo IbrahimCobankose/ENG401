@@ -5,7 +5,6 @@ araştırma/
 dataset/**
 !dataset/**/
 !dataset/**/.gitkeep
-!dataset/code/*.ipynb
 
 # Yerel araç ayarları
 .claude/
@@ -20,3 +19,13 @@ __pycache__/
 
 # Eski (hatalı) ilk tasnif: yerelde arşiv olarak duruyor, repoya eklenmiyor
 _eski_tasnif/
+
+# Tasnif çıktıları: büyük veri, kodla yeniden üretilir
+Rt345Bridge.h5/
+SDOF/
+*.zip
+
+# 2. aşama: yalnızca üretilen 3B görselleştirme repoda;
+# mod şekli dosyaları ve danışmana ait model/görseller repoya eklenmiyor
+2.Aşama/*
+!2.Aşama/bridge_modes_3d.html
